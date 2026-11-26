@@ -11,7 +11,7 @@ Full-stack blood glucose tracking web application built for the Kenpath Technolo
 
 ## Current Development Status
 
-**Module 03 (Authentication, Security & Automated Testing) complete and verified.**
+**Module 04 (Glucose Readings CRUD) complete and verified.**
 
 Implemented:
 - Independent `client/` and `server/` npm packages with committed lockfiles
@@ -22,11 +22,11 @@ Implemented:
 - Startup configuration and database connectivity verification in `server/src/server.js`
 - Idempotent demo seed script (`server/database/seed.js`) generating synthetic readings in `Asia/Kolkata` across current and previous calendar months
 - Authentication APIs (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`) with bcrypt cost 12, `HS256` 8-hour JWTs in `HttpOnly` cookies, Helmet security headers, strict CSRF `Origin` validation, and auth rate limiting
-- Vitest + Supertest integration test suite (`server/tests/auth.test.js`) isolated to `sweety_test`
+- Glucose reading CRUD APIs (`POST /api/readings`, `GET /api/readings`, `PUT /api/readings/:id`, `DELETE /api/readings/:id`) with `Asia/Kolkata` calendar date validation, strict JSON integer range checks, per-user `FOR UPDATE` transaction locking, and strict ownership isolation
+- Vitest + Supertest integration test suites (`server/tests/auth.test.js` and `server/tests/readings.test.js`) isolated to `sweety_test`
 - Minimal Sweety React status page fetching `/api/health` via the Vite `/api` dev proxy
 
 Not yet implemented (upcoming modules):
-- Blood glucose reading CRUD endpoints and API validation rules (Module 04)
 - Daily, month-to-date, and previous-month report endpoints (Module 05)
 - Full React authentication and dashboard UI (Module 06)
 
@@ -126,16 +126,63 @@ Base path `/api`:
 | `POST` | `/api/auth/logout` | `Origin` | `204` empty body + clears `sweety_token` cookie |
 | `GET` | `/api/auth/me` | `sweety_token` cookie | `200` `{ id, name, email }` |
 
-Validation and error rules:
-- `name` is trimmed and must be non-blank (`<= 120` chars).
-- `email` is trimmed, lowercased, and validated (`409 EMAIL_EXISTS` on duplicate).
-- `password` must be `>= 8` chars, not whitespace-only, and `<= 72` UTF-8 bytes (never trimmed or silently truncated).
-- Invalid login credentials return a generic `401 INVALID_CREDENTIALS` response.
-- Unauthenticated or invalid JWT requests return `401 UNAUTHORIZED`.
+## Glucose Readings API Contracts
+
+All `/api/readings` endpoints require a valid `sweety_token` cookie (`401 UNAUTHORIZED` otherwise). State-changing requests (`POST`, `PUT`, `DELETE`) also require a trusted `Origin` header matching `APP_ORIGIN` (`403 FORBIDDEN_ORIGIN` otherwise).
+
+| Method | Path | Request | Response |
+|---|---|---|---|
+| `POST` | `/api/readings` | `Origin` + Cookie + JSON `{ date, slot, value }` | `201` `{ id, date, slot, value }` |
+| `GET` | `/api/readings` | Cookie + optional `?date=YYYY-MM-DD` (defaults to today in `Asia/Kolkata`) | `200` `[{ id, date, slot, value }, ...]` in slot order (`[]` if none) |
+| `PUT` | `/api/readings/:id` | `Origin` + Cookie + JSON `{ date, slot, value }` | `200` `{ id, date, slot, value }` |
+| `DELETE` | `/api/readings/:id` | `Origin` + Cookie | `204` empty body |
+
+### Example Request & Response
+
+```json
+POST /api/readings
+{
+  "date": "2026-11-26",
+  "slot": "after_lunch",
+  "value": 142
+}
+```
+
+Response (`201 Created`):
+
+```json
+{
+  "id": 1,
+  "date": "2026-11-26",
+  "slot": "after_lunch",
+  "value": 142
+}
+```
+
+### Canonical Slots, Dates, and Validation Messages
+
+- **Allowed `slot` codes and labels (in display order):**
+  - `morning_fasting` — `Morning (fasting)`
+  - `after_breakfast` — `After breakfast`
+  - `after_lunch` — `After lunch`
+  - `after_dinner` — `After dinner`
+- **Date format & timezone:** `YYYY-MM-DD` calendar dates evaluated against `Asia/Kolkata` (`today` and past dates allowed; year zero, impossible dates, and datetime strings rejected).
+- **Glucose `value`:** Must be a JSON integer `number` from `40` to `600` inclusive (numeric strings, decimals, `0`, booleans, arrays, and objects are rejected without coercion).
+- **Mandatory validation messages:**
+  - Missing, `null`, or blank value: `"Please enter a glucose value."` (`400 VALUE_REQUIRED`)
+  - Non-integer or out of `40–600` range (including `0`): `"Value must be between 40 and 600 mg/dl."` (`400 VALUE_RANGE`)
+  - Future date: `"Date cannot be in the future."` (`400 FUTURE_DATE`)
+  - - Duplicate slot on date: `"You already have a/an <Slot Label> reading for this date."` (`409 DUPLICATE_SLOT`, using `a` for `Morning (fasting)` and `an` for `After ...`)
+  - Exceeding 4 readings per user per day: `"You can add only 4 readings per day."` (`409 DAILY_LIMIT`, checked before `DUPLICATE_SLOT`)
+
+### Data Isolation & Concurrency Strategy
+
+- **User-specific isolation:** Every query derives ownership solely from `req.user.id` (ignoring any client-supplied `user_id`/`userId`). Updates and deletes filter by `id = $1 AND user_id = $2` and return identical `404 READING_NOT_FOUND` responses for nonexistent and foreign-owned IDs.
+- **Per-user transaction locking:** `POST`, `PUT`, and `DELETE` run inside `withTransaction` and lock `SELECT id FROM users WHERE id = $1 FOR UPDATE` before counting, checking slots, or mutating rows. PostgreSQL `UNIQUE (user_id, reading_date, time_slot)` and `CHECK` constraints remain the final integrity guard.
 
 ## Automated Tests & Test Database Isolation
 
-Run the backend integration test suite against `sweety_test`:
+Run all backend integration tests (`auth.test.js` and `readings.test.js`) sequentially against `sweety_test`:
 
 ```bash
 cd server
@@ -154,39 +201,6 @@ Test isolation safeguards:
 - `server/vitest.config.js` disables file parallelism (`fileParallelism: false`) to prevent parallel database cleanup conflicts.
 - `server/src/db/pool.js` uses `TEST_DATABASE_URL` exclusively when `NODE_ENV=test` and refuses to connect if `TEST_DATABASE_URL` is missing or matches `DATABASE_URL`.
 - `server/tests/helpers/db.js` verifies `current_database() === 'sweety_test'` and `current_user === 'sweety_test_app'` via `assertDedicatedTestDatabase(client)` on the **same connection** immediately before executing `TRUNCATE`.
-
-## Manual API Verification (`curl`)
-
-State-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) require an `Origin` header matching `APP_ORIGIN`:
-
-```bash
-# Health check (safe GET, no Origin required)
-curl -i http://localhost:3001/api/health
-
-# Register a synthetic test user
-curl -i -X POST http://localhost:3001/api/auth/register \
-  -H "Content-Type: application/json" \
-  -H "Origin: http://localhost:5173" \
-  -d '{"name":"Manual Test","email":"manual.test@example.com","password":"ValidPassword123!"}'
-
-# Login and store HttpOnly cookie in a temporary cookie jar
-curl -i -c /tmp/sweety_cookies.txt -X POST http://localhost:3001/api/auth/login \
-  -H "Content-Type: application/json" \
-  -H "Origin: http://localhost:5173" \
-  -d '{"email":"manual.test@example.com","password":"ValidPassword123!"}'
-
-# Fetch authenticated user profile
-curl -i -b /tmp/sweety_cookies.txt http://localhost:3001/api/auth/me
-
-# Verify CSRF rejection when Origin is missing or untrusted (expects HTTP 403)
-curl -i -b /tmp/sweety_cookies.txt -X POST http://localhost:3001/api/auth/logout
-
-# Logout with trusted Origin (expects HTTP 204)
-curl -i -b /tmp/sweety_cookies.txt -c /tmp/sweety_cookies.txt -X POST http://localhost:3001/api/auth/logout \
-  -H "Origin: http://localhost:5173"
-
-rm -f /tmp/sweety_cookies.txt
-```
 
 ## Security Assumptions & Limitations
 

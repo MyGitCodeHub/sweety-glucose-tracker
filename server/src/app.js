@@ -3,6 +3,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { requireTrustedOrigin } from './middleware/security.js';
 import { createAuthRouter } from './routes/authRoutes.js';
+import { createReadingRouter } from './routes/readingRoutes.js';
 
 export function createApp({ authRateLimitMax } = {}) {
   const app = express();
@@ -20,6 +21,7 @@ export function createApp({ authRateLimitMax } = {}) {
 
   app.use('/api', requireTrustedOrigin);
   app.use('/api/auth', createAuthRouter({ authRateLimitMax }));
+  app.use('/api/readings', createReadingRouter());
 
   // Consistent JSON response for unmatched routes.
   app.use((_req, res) => {
