@@ -178,10 +178,14 @@ export async function withTransaction(callback) {
   }
 }
 
-export async function verifyDatabaseConnection() {
+export async function verifyDatabaseConnection(queryable = null) {
   const activePool = getPool();
-  const result = await activePool.query('SELECT current_database() AS database_name');
+  const targetClient = queryable ?? activePool;
+  const result = await targetClient.query(
+    'SELECT current_database() AS database_name, current_user AS role_name'
+  );
   const connectedDatabase = result.rows[0]?.database_name;
+  const connectedRole = result.rows[0]?.role_name;
 
   if (!connectedDatabase || connectedDatabase !== activeConfig.target.databaseName) {
     throw new DatabaseConfigurationError(
@@ -201,10 +205,10 @@ export async function verifyDatabaseConnection() {
     );
   }
 
-  return { databaseName: connectedDatabase };
+  return { databaseName: connectedDatabase, roleName: connectedRole };
 }
 
-export async function assertDedicatedTestDatabase() {
+export async function assertDedicatedTestDatabase(queryable = null) {
   if ((process.env.NODE_ENV || 'development') !== 'test') {
     throw new DatabaseConfigurationError(
       'TEST_DB_ISOLATION_ERROR',
@@ -212,7 +216,7 @@ export async function assertDedicatedTestDatabase() {
     );
   }
 
-  const { databaseName } = await verifyDatabaseConnection();
+  const { databaseName, roleName } = await verifyDatabaseConnection(queryable);
   if (databaseName === 'sweety_dev') {
     throw new DatabaseConfigurationError(
       'TEST_DB_ISOLATION_ERROR',
@@ -220,7 +224,7 @@ export async function assertDedicatedTestDatabase() {
     );
   }
 
-  return { databaseName };
+  return { databaseName, roleName };
 }
 
 export async function closePool() {

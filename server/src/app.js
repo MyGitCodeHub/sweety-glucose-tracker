@@ -1,50 +1,66 @@
+import cookieParser from 'cookie-parser';
 import express from 'express';
+import helmet from 'helmet';
+import { requireTrustedOrigin } from './middleware/security.js';
+import { createAuthRouter } from './routes/authRoutes.js';
 
-const app = express();
+export function createApp({ authRateLimitMax } = {}) {
+  const app = express();
 
-// Restrict JSON payload size to protect against oversized request bodies.
-app.use(express.json({ limit: '100kb' }));
+  app.disable('x-powered-by');
+  app.use(helmet());
 
-app.get('/api/health', (_req, res) => {
-  res.status(200).json({ status: 'ok' });
-});
+  // Restrict JSON payload size to protect against oversized request bodies.
+  app.use(express.json({ limit: '100kb' }));
+  app.use(cookieParser());
 
-// Consistent JSON response for unmatched routes.
-app.use((_req, res) => {
-  res.status(404).json({
-    error: {
-      code: 'NOT_FOUND',
-      message: 'The requested resource was not found.',
-    },
+  app.get('/api/health', (_req, res) => {
+    res.status(200).json({ status: 'ok' });
   });
-});
 
-// Global error handler: map known body-parser errors and hide internal stack traces.
-app.use((err, _req, res, _next) => {
-  if (err?.type === 'entity.parse.failed') {
-    return res.status(400).json({
+  app.use('/api', requireTrustedOrigin);
+  app.use('/api/auth', createAuthRouter({ authRateLimitMax }));
+
+  // Consistent JSON response for unmatched routes.
+  app.use((_req, res) => {
+    res.status(404).json({
       error: {
-        code: 'INVALID_JSON',
-        message: 'Request body must be valid JSON.',
+        code: 'NOT_FOUND',
+        message: 'The requested resource was not found.',
       },
     });
-  }
+  });
 
-  if (err?.type === 'entity.too.large') {
-    return res.status(413).json({
+  // Global error handler: map known body-parser errors and hide internal stack traces.
+  app.use((err, _req, res, _next) => {
+    if (err?.type === 'entity.parse.failed') {
+      return res.status(400).json({
+        error: {
+          code: 'INVALID_JSON',
+          message: 'Request body must be valid JSON.',
+        },
+      });
+    }
+
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({
+        error: {
+          code: 'PAYLOAD_TOO_LARGE',
+          message: 'Request body exceeds the allowed size limit.',
+        },
+      });
+    }
+
+    return res.status(500).json({
       error: {
-        code: 'PAYLOAD_TOO_LARGE',
-        message: 'Request body exceeds the allowed size limit.',
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected error occurred.',
       },
     });
-  }
-
-  return res.status(500).json({
-    error: {
-      code: 'INTERNAL_ERROR',
-      message: 'An unexpected error occurred.',
-    },
   });
-});
 
+  return app;
+}
+
+const app = createApp();
 export default app;

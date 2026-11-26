@@ -1,4 +1,5 @@
 import app from './app.js';
+import { AuthConfigurationError, validateAuthConfig } from './config/auth.js';
 import {
   closePool,
   sanitizeDatabaseError,
@@ -22,6 +23,7 @@ function resolvePort(rawPort) {
 
 async function startServer() {
   try {
+    validateAuthConfig();
     const { databaseName } = await verifyDatabaseConnection();
     const port = resolvePort(process.env.PORT);
 
@@ -57,7 +59,12 @@ async function startServer() {
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
   } catch (error) {
-    console.error(`Failed to start Sweety server: ${sanitizeDatabaseError(error)}`);
+    if (error instanceof AuthConfigurationError) {
+      console.error(`Failed to start Sweety server: ${error.message} (code: ${error.code})`);
+    } else {
+      console.error(`Failed to start Sweety server: ${sanitizeDatabaseError(error)}`);
+    }
+
     try {
       await closePool();
     } catch {

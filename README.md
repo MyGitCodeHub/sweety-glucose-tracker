@@ -5,12 +5,13 @@ Full-stack blood glucose tracking web application built for the Kenpath Technolo
 ## Technology Stack
 
 - **Frontend:** React 19, Vite, React Router, JavaScript (ES modules), plain CSS
-- **Backend:** Node.js (v22+), Express 5 (ES modules), bcrypt (`^6.0.0`)
-- **Database:** PostgreSQL (`pg` `^8.23.1`; locally tested with PostgreSQL 18.6)
+- **Backend:** Node.js (v22+), Express 5 (ES modules), `bcrypt`, `jsonwebtoken`, `cookie-parser`, `helmet`, `express-rate-limit`
+- **Database:** PostgreSQL (`pg`; locally tested with PostgreSQL 18.6)
+- **Testing:** Vitest 5, Supertest 7
 
 ## Current Development Status
 
-**Module 02 (Database Implementation) complete — pending manual verification.**
+**Module 03 (Authentication, Security & Automated Testing) complete and verified.**
 
 Implemented:
 - Independent `client/` and `server/` npm packages with committed lockfiles
@@ -18,12 +19,13 @@ Implemented:
 - `GET /api/health` endpoint returning `{"status":"ok"}` without requiring a database connection
 - PostgreSQL schema (`server/database/schema.sql`) defining `users` and `glucose_readings` with named integrity constraints
 - Connection pool (`server/src/db/pool.js`) with `NODE_ENV=test` isolation, `DATE` (`YYYY-MM-DD`) string preservation, and sanitized errors
-- Startup database connectivity verification in `server/src/server.js`
+- Startup configuration and database connectivity verification in `server/src/server.js`
 - Idempotent demo seed script (`server/database/seed.js`) generating synthetic readings in `Asia/Kolkata` across current and previous calendar months
+- Authentication APIs (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`) with bcrypt cost 12, `HS256` 8-hour JWTs in `HttpOnly` cookies, Helmet security headers, strict CSRF `Origin` validation, and auth rate limiting
+- Vitest + Supertest integration test suite (`server/tests/auth.test.js`) isolated to `sweety_test`
 - Minimal Sweety React status page fetching `/api/health` via the Vite `/api` dev proxy
 
 Not yet implemented (upcoming modules):
-- User registration, login, logout, and JWT cookie authentication (Module 03)
 - Blood glucose reading CRUD endpoints and API validation rules (Module 04)
 - Daily, month-to-date, and previous-month report endpoints (Module 05)
 - Full React authentication and dashboard UI (Module 06)
@@ -58,11 +60,20 @@ CREATE DATABASE sweety_test OWNER sweety_test_app;
 
 ### 3. Configure environment variables
 
-Copy `server/.env.example` to `server/.env` and fill in your local credentials, secret, and `DEMO_PASSWORD` (at least 8 characters, at most 72 UTF-8 bytes):
+Copy `server/.env.example` to `server/.env` and fill in your local credentials and secrets:
 
 ```bash
 cp server/.env.example server/.env
 ```
+
+Required variables for running the server:
+- `PORT`: Express port (defaults to `3001`)
+- `DATABASE_URL`: Development PostgreSQL connection URL (`sweety_dev` as `sweety_app`)
+- `TEST_DATABASE_URL`: Dedicated test PostgreSQL connection URL (`sweety_test` as `sweety_test_app`, must differ from `DATABASE_URL`)
+- `JWT_SECRET`: Random secret at least **32 UTF-8 bytes** long (no fallback secret exists)
+- `APP_ORIGIN`: Exact trusted browser origin (e.g., `http://localhost:5173`) with no path, query, or embedded credentials
+- `NODE_ENV`: `development`, `test`, or `production`
+- `DEMO_PASSWORD`: Demo password (`>= 8` characters, `<= 72` UTF-8 bytes) for `npm run seed`
 
 Never commit `server/.env` or real credentials. `server/.env.example` must contain only safe placeholders.
 
@@ -75,8 +86,6 @@ psql "$DATABASE_URL" -f server/database/schema.sql
 psql "$TEST_DATABASE_URL" -f server/database/schema.sql
 ```
 
-*(If those variables are not exported in your shell, pass the explicit connection URLs or `-U sweety_app -d sweety_dev` / `-U sweety_test_app -d sweety_test`.)*
-
 ### 5. Seed demo data (development database only)
 
 ```bash
@@ -84,13 +93,9 @@ cd server
 npm run seed
 ```
 
-**Seed behavior:**
 - Creates synthetic user `demo@sweety.example` using the password from `DEMO_PASSWORD` (hashed with bcrypt cost `12`).
-- Generates synthetic readings across today, earlier days of the current calendar month, and the previous calendar month using `Asia/Kolkata` dates (never future dates).
-- **Repeated runs are idempotent:** if `demo@sweety.example` already exists, `seed.js` preserves the existing password hash, name, and readings without overwriting them, and inserts only missing slot/date rows (`ON CONFLICT DO NOTHING`).
-- **Test-database safety:** `seed.js` refuses to run when `NODE_ENV=test`, when `DATABASE_URL` matches `TEST_DATABASE_URL`, or when connected to a test database (`sweety_test` or `*_test`).
-
-**Demo login email:** `demo@sweety.example` (use the password configured in your local `server/.env` `DEMO_PASSWORD` once authentication endpoints are implemented in Module 03).
+- Repeated runs are idempotent: if `demo@sweety.example` already exists, its existing password hash, name, and readings are preserved.
+- Refuses to run when `NODE_ENV=test`, when `DATABASE_URL` matches `TEST_DATABASE_URL`, or against `sweety_test` / `*_test`.
 
 ### 6. Run and restart the backend server
 
@@ -101,10 +106,6 @@ cd server
 npm run dev
 ```
 
-*(Uses `node --env-file-if-exists=.env src/server.js` — non-watch mode avoids Node `--watch` `EPIPE` errors.)*
-
-The server verifies PostgreSQL connectivity before listening on `http://localhost:3001`.
-
 ### 7. Run the frontend dev server
 
 In a second terminal:
@@ -114,31 +115,86 @@ cd client
 npm run dev
 ```
 
-The Vite dev server listens on `http://localhost:5173` (`strictPort: true`) and proxies `/api` requests to `http://localhost:3001`.
+## Authentication API Contracts
 
-### 8. Verify health endpoint and database state
+Base path `/api`:
 
-Check the backend health endpoint directly and through the Vite proxy:
+| Method | Path | Request / Auth | Response |
+|---|---|---|---|
+| `POST` | `/api/auth/register` | `Origin` + JSON `{ name, email, password }` | `201` `{ id, name, email }` (no cookie set; login separately) |
+| `POST` | `/api/auth/login` | `Origin` + JSON `{ email, password }` | `200` `{ id, name, email }` + `Set-Cookie: sweety_token=...` |
+| `POST` | `/api/auth/logout` | `Origin` | `204` empty body + clears `sweety_token` cookie |
+| `GET` | `/api/auth/me` | `sweety_token` cookie | `200` `{ id, name, email }` |
+
+Validation and error rules:
+- `name` is trimmed and must be non-blank (`<= 120` chars).
+- `email` is trimmed, lowercased, and validated (`409 EMAIL_EXISTS` on duplicate).
+- `password` must be `>= 8` chars, not whitespace-only, and `<= 72` UTF-8 bytes (never trimmed or silently truncated).
+- Invalid login credentials return a generic `401 INVALID_CREDENTIALS` response.
+- Unauthenticated or invalid JWT requests return `401 UNAUTHORIZED`.
+
+## Automated Tests & Test Database Isolation
+
+Run the backend integration test suite against `sweety_test`:
 
 ```bash
+cd server
+npm test
+```
+
+Optional watch mode during development:
+
+```bash
+cd server
+npm run test:watch
+```
+
+Test isolation safeguards:
+- `server/tests/setup/env.js` loads `server/.env`, forces `NODE_ENV=test`, and sets a dedicated synthetic test-only `JWT_SECRET`.
+- `server/vitest.config.js` disables file parallelism (`fileParallelism: false`) to prevent parallel database cleanup conflicts.
+- `server/src/db/pool.js` uses `TEST_DATABASE_URL` exclusively when `NODE_ENV=test` and refuses to connect if `TEST_DATABASE_URL` is missing or matches `DATABASE_URL`.
+- `server/tests/helpers/db.js` verifies `current_database() === 'sweety_test'` and `current_user === 'sweety_test_app'` via `assertDedicatedTestDatabase(client)` on the **same connection** immediately before executing `TRUNCATE`.
+
+## Manual API Verification (`curl`)
+
+State-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) require an `Origin` header matching `APP_ORIGIN`:
+
+```bash
+# Health check (safe GET, no Origin required)
 curl -i http://localhost:3001/api/health
-curl -i http://localhost:5173/api/health
+
+# Register a synthetic test user
+curl -i -X POST http://localhost:3001/api/auth/register \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:5173" \
+  -d '{"name":"Manual Test","email":"manual.test@example.com","password":"ValidPassword123!"}'
+
+# Login and store HttpOnly cookie in a temporary cookie jar
+curl -i -c /tmp/sweety_cookies.txt -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:5173" \
+  -d '{"email":"manual.test@example.com","password":"ValidPassword123!"}'
+
+# Fetch authenticated user profile
+curl -i -b /tmp/sweety_cookies.txt http://localhost:3001/api/auth/me
+
+# Verify CSRF rejection when Origin is missing or untrusted (expects HTTP 403)
+curl -i -b /tmp/sweety_cookies.txt -X POST http://localhost:3001/api/auth/logout
+
+# Logout with trusted Origin (expects HTTP 204)
+curl -i -b /tmp/sweety_cookies.txt -c /tmp/sweety_cookies.txt -X POST http://localhost:3001/api/auth/logout \
+  -H "Origin: http://localhost:5173"
+
+rm -f /tmp/sweety_cookies.txt
 ```
 
-Inspect tables and verify demo seed counts without exposing password hashes:
+## Security Assumptions & Limitations
 
-```bash
-psql -U sweety_app -d sweety_dev -c "\d+ users" -c "\d+ glucose_readings"
-psql -U sweety_app -d sweety_dev -c "SELECT id, name, email, left(password_hash, 7) AS hash_prefix FROM users WHERE email = 'demo@sweety.example';"
-psql -U sweety_app -d sweety_dev -c "SELECT date_trunc('month', reading_date)::date AS month, count(*) FROM glucose_readings GROUP BY 1 ORDER BY 1;"
-```
-
-Build the frontend for production:
-
-```bash
-cd client
-npm run build
-```
+- **Cookie policy:** `sweety_token` uses `HttpOnly`, `SameSite=Lax`, `Path=/`, 8-hour `maxAge`, and `Secure` when `NODE_ENV=production`. Production deployment must run behind HTTPS so `Secure` cookies are transmitted by browsers.
+- **Stateless JWT logout limitation:** `POST /api/auth/logout` clears the browser cookie only; it does not revoke a previously copied JWT before its 8-hour expiration (`exp`).
+- **In-memory rate limiter limitation:** Authentication endpoints (`/register`, `/login`) limit requests to **20 per IP per 15-minute window** (`429 RATE_LIMITED`) using `express-rate-limit`'s default in-memory store, which resets on process restart and is scoped per Node process.
+- **Strict Origin policy:** All mutating `/api` requests require an `Origin` header matching `APP_ORIGIN` exactly; missing, malformed, path-bearing, or credential-bearing origins are rejected with `403 FORBIDDEN_ORIGIN`.
+- **Separate test database protection:** Automated tests never touch `sweety_dev` and fail closed if `sweety_test` / `sweety_test_app` isolation cannot be verified.
 
 ## Notes
 
