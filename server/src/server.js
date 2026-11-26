@@ -1,4 +1,9 @@
 import app from './app.js';
+import {
+  closePool,
+  sanitizeDatabaseError,
+  verifyDatabaseConnection,
+} from './db/pool.js';
 
 const DEFAULT_PORT = 3001;
 
@@ -15,8 +20,51 @@ function resolvePort(rawPort) {
   return parsed;
 }
 
-const port = resolvePort(process.env.PORT);
+async function startServer() {
+  try {
+    const { databaseName } = await verifyDatabaseConnection();
+    const port = resolvePort(process.env.PORT);
 
-app.listen(port, () => {
-  console.log(`Sweety server listening on http://localhost:${port}`);
-});
+    const server = app.listen(port, () => {
+      console.log(
+        `Sweety server listening on http://localhost:${port} (database: ${databaseName})`
+      );
+    });
+
+    let shuttingDown = false;
+    async function shutdown(signal) {
+      if (shuttingDown) {
+        return;
+      }
+      shuttingDown = true;
+
+      console.log(`Received ${signal}; shutting down Sweety server...`);
+      server.close(async (closeError) => {
+        if (closeError) {
+          console.error(`HTTP server close error: ${closeError.message}`);
+        }
+
+        try {
+          await closePool();
+        } catch (poolError) {
+          console.error(`Database pool close error: ${sanitizeDatabaseError(poolError)}`);
+        }
+
+        process.exit(closeError ? 1 : 0);
+      });
+    }
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+  } catch (error) {
+    console.error(`Failed to start Sweety server: ${sanitizeDatabaseError(error)}`);
+    try {
+      await closePool();
+    } catch {
+      // Pool was not initialized or failed during teardown.
+    }
+    process.exit(1);
+  }
+}
+
+startServer();
