@@ -1,54 +1,60 @@
 # Sweety — Blood Glucose Tracker
 
-Full-stack blood glucose tracking web application built for the Kenpath Technologies Junior Full Stack Developer assessment.
+Personal blood glucose tracking web application built for the Kenpath Technologies Junior Full Stack Developer (JavaScript & AI) assessment.
 
-## Technology Stack
+## Demo Video
+
+- **Application Walkthrough:** [Watch the Sweety Demo Video on Google Drive](https://drive.google.com/file/d/1J5QSipyPollSGlJt2OpViDkk-ORJ2z_m/view?usp=drivesdk)
+
+## Overview
+
+Sweety allows patients to create an account, log in securely, manage up to four blood glucose readings per calendar day across fixed meal/time slots, and review Daily, Month-to-Date, and Monthly summary statistics. All server validation, date calculations, report aggregations, and user-ownership checks are enforced in the Express/PostgreSQL backend and surfaced through a responsive, accessible React interface.
+
+### Main Features
+
+- **Account authentication:** Registration, login, logout, and persistent session checks using bcrypt-hashed passwords and `HttpOnly` JWT cookies.
+- **Glucose readings management:** Create, view, edit, and delete daily readings across four canonical slots (`Morning (fasting)`, `After breakfast`, `After lunch`, `After dinner`) with whole-number validation (`40–600 mg/dl`), duplicate-slot prevention, and a 4-reading daily cap.
+- **Summary reports:** Daily, Month-to-Date (inclusive from the 1st of the selected month through the selected date), and Monthly (full previous calendar month) summaries displaying highest, lowest, individual-reading average rounded to 1 decimal place, unitless reading count, and friendly empty states (`—`).
+- **Accessible & responsive UI:** Semantic landmarks, keyboard-accessible tabs and native `<dialog>` forms, clear error/success announcements, and fluid layouts down to `320px`.
+- **Automated testing (including official bonus):** 58 backend Vitest + Supertest integration tests plus the implemented official bonus task—12 frontend reading form tests using React Testing Library and Vitest (**70 passing automated tests total**).
+
+### Technology Stack
 
 - **Frontend:** React 19, Vite, React Router, JavaScript (ES modules), plain CSS
 - **Backend:** Node.js (v22+), Express 5 (ES modules), `bcrypt`, `jsonwebtoken`, `cookie-parser`, `helmet`, `express-rate-limit`
-- **Database:** PostgreSQL (`pg`; locally tested with PostgreSQL 18.6)
-- **Testing:** Vitest 5, Supertest 7
+- **Database:** PostgreSQL (`pg`)
+- **Testing:** Vitest 5, Supertest 7, React Testing Library, jsdom, `@testing-library/jest-dom`, `@testing-library/user-event`
 
-## Current Development Status
-
-**Module 05 (Glucose Reports API) complete and verified.**
-
-Implemented:
-- Independent `client/` and `server/` npm packages with committed lockfiles
-- Express application (`server/src/app.js`) separated from server startup (`server/src/server.js`)
-- `GET /api/health` endpoint returning `{"status":"ok"}` without requiring a database connection
-- PostgreSQL schema (`server/database/schema.sql`) defining `users` and `glucose_readings` with named integrity constraints
-- Connection pool (`server/src/db/pool.js`) with `NODE_ENV=test` isolation, `DATE` (`YYYY-MM-DD`) string preservation, and sanitized errors
-- Startup configuration and database connectivity verification in `server/src/server.js`
-- Idempotent demo seed script (`server/database/seed.js`) generating synthetic readings in `Asia/Kolkata` across current and previous calendar months
-- Authentication APIs (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`) with bcrypt cost 12, `HS256` 8-hour JWTs in `HttpOnly` cookies, Helmet security headers, strict CSRF `Origin` validation, and auth rate limiting
-- Glucose reading CRUD APIs (`POST /api/readings`, `GET /api/readings`, `PUT /api/readings/:id`, `DELETE /api/readings/:id`) with `Asia/Kolkata` calendar date validation, strict JSON integer range checks, per-user `FOR UPDATE` transaction locking, and strict ownership isolation
-- Glucose report APIs (`GET /api/reports/daily`, `GET /api/reports/month-to-date`, `GET /api/reports/monthly`) with `Asia/Kolkata` optional date defaults, SQL aggregation, snapshot-consistent daily details, and friendly null empty-state statistics
-- Vitest + Supertest integration test suites (`server/tests/auth.test.js`, `server/tests/readings.test.js`, and `server/tests/reports.test.js`) isolated to `sweety_test`
-- Minimal Sweety React status page fetching `/api/health` via the Vite `/api` dev proxy
-
-Not yet implemented (upcoming modules):
-- Full React authentication and dashboard UI (Module 06)
+---
 
 ## Setup Instructions
 
 ### Prerequisites
 
-- Node.js (tested on v22.22.1) and npm (tested on 9.2.0)
-- PostgreSQL (locally tested on PostgreSQL 18.6)
+- **Node.js** `v22+` and **npm** (tested with Node `v22.22.1` and npm `9.2.0`)
+- **PostgreSQL** (`v15+`, locally tested with PostgreSQL `18.6`)
+- **Git**
 
-### 1. Install dependencies
-
-Run in separate terminals or sequentially:
+### 1. Clone the repository
 
 ```bash
-cd server && npm install
-cd ../client && npm install
+git clone https://github.com/MyGitCodeHub/sweety-glucose-tracker.git
+cd sweety-glucose-tracker
 ```
 
-### 2. Create PostgreSQL roles and databases
+### 2. Install dependencies
 
-Create dedicated, least-privilege roles and separate development/test databases (replace placeholder passwords before running):
+Install server and client packages separately using the committed lockfiles:
+
+```bash
+cd server && npm ci
+cd ../client && npm ci
+cd ..
+```
+
+### 3. Create PostgreSQL roles, databases, and schema permissions
+
+Connect to PostgreSQL as an administrative superuser (such as `postgres`) to create dedicated, least-privilege development and test roles and databases, and grant schema `public` ownership/creation privileges required on PostgreSQL 15+ (replace placeholder passwords before running):
 
 ```sql
 CREATE ROLE sweety_app WITH LOGIN PASSWORD 'replace_with_dev_password';
@@ -56,190 +62,223 @@ CREATE ROLE sweety_test_app WITH LOGIN PASSWORD 'replace_with_test_password';
 
 CREATE DATABASE sweety_dev OWNER sweety_app;
 CREATE DATABASE sweety_test OWNER sweety_test_app;
+
+\c sweety_dev
+ALTER SCHEMA public OWNER TO sweety_app;
+GRANT ALL ON SCHEMA public TO sweety_app;
+
+\c sweety_test
+ALTER SCHEMA public OWNER TO sweety_test_app;
+GRANT ALL ON SCHEMA public TO sweety_test_app;
 ```
 
-### 3. Configure environment variables
+### 4. Configure environment variables
 
-Copy `server/.env.example` to `server/.env` and fill in your local credentials and secrets:
+Copy the example template and update `server/.env` with your local values:
 
 ```bash
 cp server/.env.example server/.env
 ```
 
-Required variables for running the server:
-- `PORT`: Express port (defaults to `3001`)
-- `DATABASE_URL`: Development PostgreSQL connection URL (`sweety_dev` as `sweety_app`)
-- `TEST_DATABASE_URL`: Dedicated test PostgreSQL connection URL (`sweety_test` as `sweety_test_app`, must differ from `DATABASE_URL`)
+Required variables in `server/.env`:
+
+- `PORT`: Express listening port (default `3001`)
+- `DATABASE_URL`: Development PostgreSQL URL (`postgresql://sweety_app:...@localhost:5432/sweety_dev`)
+- `TEST_DATABASE_URL`: Dedicated test PostgreSQL URL (`postgresql://sweety_test_app:...@localhost:5432/sweety_test`; must differ from `DATABASE_URL`)
 - `JWT_SECRET`: Random secret at least **32 UTF-8 bytes** long (no fallback secret exists)
-- `APP_ORIGIN`: Exact trusted browser origin (e.g., `http://localhost:5173`) with no path, query, or embedded credentials
+- `APP_ORIGIN`: Exact trusted browser origin (e.g., `http://localhost:5173`) with no trailing slash, path, query, or embedded credentials
 - `NODE_ENV`: `development`, `test`, or `production`
-- `DEMO_PASSWORD`: Demo password (`>= 8` characters, `<= 72` UTF-8 bytes) for `npm run seed`
+- `DEMO_PASSWORD`: Local demo user password (`>= 8` characters, `<= 72` UTF-8 bytes) used by `npm run seed`
 
-Never commit `server/.env` or real credentials. `server/.env.example` must contain only safe placeholders.
+Never commit `server/.env` or real credentials. `server/.env.example` contains safe placeholders only.
 
-### 4. Initialize database schemas
+### 5. Initialize schemas for both databases
 
-Apply `server/database/schema.sql` to both databases (the script uses `CREATE TABLE IF NOT EXISTS` and is safe to re-run):
+Run the schema initialization commands directly from the repository root (enter each role password when prompted):
 
 ```bash
-psql "$DATABASE_URL" -f server/database/schema.sql
-psql "$TEST_DATABASE_URL" -f server/database/schema.sql
+psql -h localhost -U sweety_app -d sweety_dev -W -f server/database/schema.sql
+psql -h localhost -U sweety_test_app -d sweety_test -W -f server/database/schema.sql
 ```
 
-### 5. Seed demo data (development database only)
+`server/database/schema.sql` uses `CREATE TABLE IF NOT EXISTS` and is safe to re-run.
+
+### 6. Seed synthetic demo data (development database only)
+
+Ensure `DEMO_PASSWORD` is configured in `server/.env`, then run:
 
 ```bash
 cd server
 npm run seed
 ```
 
-- Creates synthetic user `demo@sweety.example` using the password from `DEMO_PASSWORD` (hashed with bcrypt cost `12`).
-- Repeated runs are idempotent: if `demo@sweety.example` already exists, its existing password hash, name, and readings are preserved.
-- Refuses to run when `NODE_ENV=test`, when `DATABASE_URL` matches `TEST_DATABASE_URL`, or against `sweety_test` / `*_test`.
+- **Demo login email:** `demo@sweety.example`
+- **Demo login password:** The `DEMO_PASSWORD` value you set locally in `server/.env` before running `npm run seed`.
+- Repeated runs are idempotent and preserve an existing `demo@sweety.example` account while skipping already-present readings.
+- `seed.js` refuses to run against `NODE_ENV=test`, `sweety_test`, `*_test`, or when `DATABASE_URL` matches `TEST_DATABASE_URL`.
 
-### 6. Run and restart the backend server
+### 7. Start the backend and frontend servers
 
-Start (or manually restart after stopping with `Ctrl+C`) using the non-watch startup command:
+In Terminal 1 (backend API on `http://localhost:3001`):
 
 ```bash
 cd server
 npm run dev
 ```
 
-### 7. Run the frontend dev server
-
-In a second terminal:
+In Terminal 2 (Vite dev server on `http://localhost:5173`, proxying `/api` to `localhost:3001`):
 
 ```bash
 cd client
 npm run dev
 ```
 
-## Authentication API Contracts
+Open the application in Chrome at: **http://localhost:5173**
 
-Base path `/api`:
+---
 
-| Method | Path | Request / Auth | Response |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | `Origin` + JSON `{ name, email, password }` | `201` `{ id, name, email }` (no cookie set; login separately) |
-| `POST` | `/api/auth/login` | `Origin` + JSON `{ email, password }` | `200` `{ id, name, email }` + `Set-Cookie: sweety_token=...` |
-| `POST` | `/api/auth/logout` | `Origin` | `204` empty body + clears `sweety_token` cookie |
-| `GET` | `/api/auth/me` | `sweety_token` cookie | `200` `{ id, name, email }` |
+## Testing and Verification
 
-## Glucose Readings API Contracts
+### Automated Test Results Summary
 
-All `/api/readings` endpoints require a valid `sweety_token` cookie (`401 UNAUTHORIZED` otherwise). State-changing requests (`POST`, `PUT`, `DELETE`) also require a trusted `Origin` header matching `APP_ORIGIN` (`403 FORBIDDEN_ORIGIN` otherwise).
+- **Backend:** 58 passing automated integration tests (`cd server && npm test`)
+- **Frontend (Official Bonus Task):** 12 passing reading form tests using React Testing Library and Vitest (`cd client && npm test`)
+- **Total:** **70 passing automated tests**
 
-| Method | Path | Request | Response |
-|---|---|---|---|
-| `POST` | `/api/readings` | `Origin` + Cookie + JSON `{ date, slot, value }` | `201` `{ id, date, slot, value }` |
-| `GET` | `/api/readings` | Cookie + optional `?date=YYYY-MM-DD` (defaults to today in `Asia/Kolkata`) | `200` `[{ id, date, slot, value }, ...]` in slot order (`[]` if none) |
-| `PUT` | `/api/readings/:id` | `Origin` + Cookie + JSON `{ date, slot, value }` | `200` `{ id, date, slot, value }` |
-| `DELETE` | `/api/readings/:id` | `Origin` + Cookie | `204` empty body |
+### Backend Automated Integration Tests
 
-### Canonical Slots, Dates, and Validation Messages
-
-- **Allowed `slot` codes and labels (in display order):**
-  - `morning_fasting` — `Morning (fasting)`
-  - `after_breakfast` — `After breakfast`
-  - `after_lunch` — `After lunch`
-  - `after_dinner` — `After dinner`
-- **Date format & timezone:** `YYYY-MM-DD` calendar dates evaluated against `Asia/Kolkata` (`today` and past dates allowed; year zero, impossible dates, and datetime strings rejected).
-- **Glucose `value`:** Must be a JSON integer `number` from `40` to `600` inclusive (numeric strings, decimals, `0`, booleans, arrays, and objects are rejected without coercion).
-- **Mandatory validation messages:**
-  - Missing, `null`, or blank value: `"Please enter a glucose value."` (`400 VALUE_REQUIRED`)
-  - Non-integer or out of `40–600` range (including `0`): `"Value must be between 40 and 600 mg/dl."` (`400 VALUE_RANGE`)
-  - Future date: `"Date cannot be in the future."` (`400 FUTURE_DATE`)
-  - Duplicate slot on date: `"You already have a/an <Slot Label> reading for this date."` (`409 DUPLICATE_SLOT`, using `a` for `Morning (fasting)` and `an` for `After ...`)
-  - Exceeding 4 readings per user per day: `"You can add only 4 readings per day."` (`409 DAILY_LIMIT`, checked before `DUPLICATE_SLOT`)
-
-### Data Isolation & Concurrency Strategy
-
-- **User-specific isolation:** Every query derives ownership solely from `req.user.id` (ignoring any client-supplied `user_id`/`userId`). Updates and deletes filter by `id = $1 AND user_id = $2` and return identical `404 READING_NOT_FOUND` responses for nonexistent and foreign-owned IDs.
-- **Per-user transaction locking:** `POST`, `PUT`, and `DELETE` run inside `withTransaction` and lock `SELECT id FROM users WHERE id = $1 FOR UPDATE` before counting, checking slots, or mutating rows. PostgreSQL `UNIQUE (user_id, reading_date, time_slot)` and `CHECK` constraints remain the final integrity guard.
-
-## Glucose Reports API Contracts
-
-All `/api/reports/*` endpoints are read-only `GET` routes protected by `requireAuth` (`401 UNAUTHORIZED` when missing/invalid cookie). All three endpoints accept an optional `?date=YYYY-MM-DD` query parameter:
-- When omitted, `date` defaults to today's calendar date in `Asia/Kolkata`.
-- Blank, malformed, impossible, or repeated `?date=` values return `400 INVALID_DATE`.
-- Future dates (`> today` in `Asia/Kolkata`) return `400 FUTURE_DATE`.
-
-| Method | Path | Date Range (Inclusive) | Response (`200`) |
-|---|---|---|---|
-| `GET` | `/api/reports/daily` | `selectedDate` through `selectedDate` | `{ startDate, endDate, highest, lowest, average, count, readings }` |
-| `GET` | `/api/reports/month-to-date` | `YYYY-MM-01` through `selectedDate` | `{ startDate, endDate, highest, lowest, average, count }` |
-| `GET` | `/api/reports/monthly` | Full calendar month immediately before `selectedDate`'s month | `{ startDate, endDate, highest, lowest, average, count }` |
-
-### Report Rules & Examples
-
-- **Equal weighting & rounding:** `average` is computed over all individual readings in the range (never by averaging daily averages) and rounded to 1 decimal place. Exact integer averages serialize as JSON numbers (e.g. `126`, formatted with one trailing decimal digit in the UI).
-- **Daily snapshot consistency:** `/api/reports/daily` derives `highest`, `lowest`, `average`, `count`, and canonical slot-ordered `readings` from a single SQL query.
-- **Empty reports:** When no readings match the range, `highest`, `lowest`, and `average` are `null` (never `0`), `count` is `0`, and `/daily` returns `readings: []`.
-
-Example `GET /api/reports/daily?date=2026-11-26` response (`200 OK`):
-
-```json
-{
-  "startDate": "2026-11-26",
-  "endDate": "2026-11-26",
-  "highest": 146,
-  "lowest": 98,
-  "average": 124,
-  "count": 3,
-  "readings": [
-    { "id": 1, "date": "2026-11-26", "slot": "morning_fasting", "value": 98 },
-    { "id": 2, "date": "2026-11-26", "slot": "after_lunch", "value": 146 },
-    { "id": 3, "date": "2026-11-26", "slot": "after_dinner", "value": 128 }
-  ]
-}
-```
-
-Example empty `GET /api/reports/monthly?date=2026-11-26` response (`200 OK`):
-
-```json
-{
-  "startDate": "2026-10-01",
-  "endDate": "2026-10-31",
-  "highest": null,
-  "lowest": null,
-  "average": null,
-  "count": 0
-}
-```
-
-## Automated Tests & Test Database Isolation
-
-Run all backend integration tests (`auth.test.js`, `readings.test.js`, and `reports.test.js`) sequentially against `sweety_test`:
+Run the 58 Vitest + Supertest integration tests sequentially against `sweety_test`:
 
 ```bash
 cd server
 npm test
 ```
 
-Optional watch mode during development:
+Coverage across `server/tests/auth.test.js` (27 tests), `server/tests/readings.test.js` (18 tests), and `server/tests/reports.test.js` (13 tests):
+- User registration, email normalization, bcrypt hashing, 72-byte password boundary, duplicate-email concurrency, login cookies, JWT validation (`HS256`, `exp`, integer `sub`), logout, Origin CSRF protection, and auth rate limiting.
+- Glucose readings CRUD, `40`/`600` integer boundaries, decimal/zero/type rejection, all five mandatory validation rules and precedence (`DAILY_LIMIT` before `DUPLICATE_SLOT`), full-day editing, per-user ownership isolation, and concurrent slot/limit locking.
+- Daily, Month-to-Date, and Monthly calendar ranges (including leap years, year transitions, and `Asia/Kolkata` midnight boundaries), individual-reading averages rounded to 1 decimal place, empty `null` states, and `Cache-Control: no-store` headers.
+- Strict test database isolation: `server/vitest.config.js` sets `fileParallelism: false`, `server/src/db/pool.js` refuses to run tests if `TEST_DATABASE_URL` is missing or matches `DATABASE_URL`, and `server/tests/helpers/db.js` verifies `current_database() === 'sweety_test'` and `current_user === 'sweety_test_app'` on the exact connection before executing `TRUNCATE`.
+
+### Frontend Reading Form Tests (Official Bonus Task — React Testing Library & Vitest)
+
+Run the 12 automated React Testing Library tests for `ReadingForm` (`client/src/components/ReadingForm.test.jsx`) using Vitest and `jsdom`:
 
 ```bash
-cd server
-npm run test:watch
+cd client
+npm test
 ```
 
-Test isolation safeguards:
-- `server/tests/setup/env.js` loads `server/.env`, forces `NODE_ENV=test`, and sets a dedicated synthetic test-only `JWT_SECRET`.
-- `server/vitest.config.js` disables file parallelism (`fileParallelism: false`) to prevent parallel database cleanup conflicts.
-- `server/src/db/pool.js` uses `TEST_DATABASE_URL` exclusively when `NODE_ENV=test` and refuses to connect if `TEST_DATABASE_URL` is missing or matches `DATABASE_URL`.
-- `server/tests/helpers/db.js` verifies `current_database() === 'sweety_test'` and `current_user === 'sweety_test_app'` via `assertDedicatedTestDatabase(client)` on the **same connection** immediately before executing `TRUNCATE`.
+Coverage across `ReadingForm.test.jsx` (12 tests, mocking `readingsService.js` without hitting the backend or PostgreSQL):
+- Client validation and official messages for empty values, values below `40` (including `0`), values above `600`, fractional inputs (`120.5`), and future `Asia/Kolkata` dates.
+- Backend API error handling for `409 DUPLICATE_SLOT` and `409 DAILY_LIMIT`, preserving all user-entered fields when submission fails.
+- Create submission payload shape (integer numeric `value`), edit-mode prefilling, update submission with reading ID, and pending-state control disabling / duplicate-request prevention.
 
-## Security Assumptions & Limitations
+### Frontend Lint and Production Build
 
-- **Cookie policy:** `sweety_token` uses `HttpOnly`, `SameSite=Lax`, `Path=/`, 8-hour `maxAge`, and `Secure` when `NODE_ENV=production`. Production deployment must run behind HTTPS so `Secure` cookies are transmitted by browsers.
-- **Stateless JWT logout limitation:** `POST /api/auth/logout` clears the browser cookie only; it does not revoke a previously copied JWT before its 8-hour expiration (`exp`).
-- **In-memory rate limiter limitation:** Authentication endpoints (`/register`, `/login`) limit requests to **20 per IP per 15-minute window** (`429 RATE_LIMITED`) using `express-rate-limit`'s default in-memory store, which resets on process restart and is scoped per Node process.
-- **Strict Origin policy:** All mutating `/api` requests require an `Origin` header matching `APP_ORIGIN` exactly; missing, malformed, path-bearing, or credential-bearing origins are rejected with `403 FORBIDDEN_ORIGIN`.
-- **API cache protection:** Centralized Express middleware scoped to `/api` sets `Cache-Control: no-store` across all authentication, reading, report, and API error responses so sensitive health data is not cached by browsers or proxies, without disabling caching for non-`/api` frontend static assets.
-- **Separate test database protection:** Automated tests never touch `sweety_dev` and fail closed if `sweety_test` / `sweety_test_app` isolation cannot be verified.
+Run static linting and build the client bundle:
+
+```bash
+cd client
+npm run lint
+npm run build
+```
+
+### Manual Browser Verification
+
+With both servers running (`http://localhost:5173`), verify in Chrome across `320px`, `768px`, and `1280px` viewports:
+1. Unauthenticated access to `/`, `/readings`, and `/reports` redirects to `/login` without flashing protected content.
+2. Registration, login with `demo@sweety.example` (or a new account), reload persistence via `/api/auth/me`, and logout.
+3. Creating, editing, and deleting readings on Dashboard and Readings, confirming inline validation errors (`VALUE_REQUIRED`, `VALUE_RANGE`, `FUTURE_DATE`, `DUPLICATE_SLOT`, `DAILY_LIMIT`) preserve inputs and update reports immediately.
+4. Daily, Month-to-Date, and Monthly report tabs, 1-decimal average formatting, and `—` empty states.
+5. Keyboard-only navigation (`Tab`, `ArrowLeft`/`ArrowRight` on tabs, `Escape` closing dialogs with focus restoration) and network error/recovery handling.
+
+---
+
+## API Documentation
+
+Base path: `/api`. Requests and responses use JSON unless noted (`204 No Content` returns an empty body). Error responses follow `{ "error": { "code": "...", "message": "..." } }`.
+
+### Health & Authentication
+
+| Method | Path | Auth / Headers | Success Response |
+|---|---|---|---|
+| `GET` | `/api/health` | None | `200` `{ "status": "ok" }` |
+| `POST` | `/api/auth/register` | `Origin` + JSON `{ name, email, password }` | `201` `{ id, name, email }` (no cookie set) |
+| `POST` | `/api/auth/login` | `Origin` + JSON `{ email, password }` | `200` `{ id, name, email }` + `Set-Cookie: sweety_token=...` |
+| `POST` | `/api/auth/logout` | `Origin` | `204` empty body + clears `sweety_token` cookie |
+| `GET` | `/api/auth/me` | `sweety_token` cookie | `200` `{ id, name, email }` |
+
+### Glucose Readings
+
+All `/api/readings` routes require a valid `sweety_token` cookie (`401 UNAUTHORIZED` otherwise). Mutations (`POST`, `PUT`, `DELETE`) also require a trusted `Origin` matching `APP_ORIGIN` (`403 FORBIDDEN_ORIGIN` otherwise).
+
+| Method | Path | Request | Success Response |
+|---|---|---|---|
+| `POST` | `/api/readings` | `Origin` + Cookie + JSON `{ date, slot, value }` | `201` `{ id, date, slot, value }` |
+| `GET` | `/api/readings` | Cookie + optional `?date=YYYY-MM-DD` (defaults to `Asia/Kolkata` today) | `200` `[{ id, date, slot, value }, ...]` in slot order (`[]` if none) |
+| `PUT` | `/api/readings/:id` | `Origin` + Cookie + JSON `{ date, slot, value }` | `200` `{ id, date, slot, value }` |
+| `DELETE` | `/api/readings/:id` | `Origin` + Cookie | `204` empty body |
+
+- **Canonical `slot` codes and labels (in display order):**
+  1. `morning_fasting` — `Morning (fasting)`
+  2. `after_breakfast` — `After breakfast`
+  3. `after_lunch` — `After lunch`
+  4. `after_dinner` — `After dinner`
+- **Validation messages and precedence:**
+  - Missing, `null`, or blank value: `"Please enter a glucose value."` (`400 VALUE_REQUIRED`)
+  - Non-integer or outside `40–600` (including `0` and decimals): `"Value must be between 40 and 600 mg/dl."` (`400 VALUE_RANGE`)
+  - Future calendar date (`> today` in `Asia/Kolkata`): `"Date cannot be in the future."` (`400 FUTURE_DATE`)
+  - Exceeding 4 readings per user per day: `"You can add only 4 readings per day."` (`409 DAILY_LIMIT`, checked before duplicate slot)
+  - Duplicate slot on the same date: `"You already have a/an <Slot Label> reading for this date."` (`409 DUPLICATE_SLOT`)
+  - Nonexistent or foreign-owned reading ID: `"Reading not found."` (`404 READING_NOT_FOUND`)
+
+### Glucose Reports
+
+All `/api/reports/*` endpoints require a valid `sweety_token` cookie and accept an optional `?date=YYYY-MM-DD` parameter (defaulting to today in `Asia/Kolkata`; blank, malformed, impossible, or repeated dates return `400 INVALID_DATE`, and future dates return `400 FUTURE_DATE`).
+
+| Method | Path | Date Range (Inclusive) | Response (`200`) |
+|---|---|---|---|
+| `GET` | `/api/reports/daily` | `selectedDate` through `selectedDate` | `{ startDate, endDate, highest, lowest, average, count, readings }` |
+| `GET` | `/api/reports/month-to-date` | `YYYY-MM-01` through `selectedDate` | `{ startDate, endDate, highest, lowest, average, count }` |
+| `GET` | `/api/reports/monthly` | Full previous calendar month before `selectedDate`'s month | `{ startDate, endDate, highest, lowest, average, count }` |
+
+- Averages are weighted across all individual stored readings in the range and rounded to 1 decimal place (`120.0 mg/dl` in the UI).
+- When no readings match the range, `highest`, `lowest`, and `average` are `null` (`—` in the UI), `count` is `0`, and `/daily` returns `readings: []`.
+
+---
+
+## Security Measures
+
+- **Password hashing:** Passwords are hashed with `bcrypt` (cost factor `12`), enforcing the 72 UTF-8 byte bcrypt limit before hashing/verification and never returning hashes in JSON responses.
+- **HttpOnly cookie authentication:** JWTs (`HS256`, 8-hour `exp`, integer user `sub`) are stored only in an `HttpOnly`, `SameSite=Lax`, `Path=/` cookie (`Secure` enabled when `NODE_ENV=production`), avoiding `localStorage`/`sessionStorage` token storage. *(Limitation: stateless JWT logout clears the browser cookie rather than maintaining a server-side token revocation list.)*
+- **CSRF Origin validation:** Mutating `/api` requests verify an exact `Origin` match against `APP_ORIGIN`, rejecting missing, malformed, or cross-origin mutations with `403 FORBIDDEN_ORIGIN`.
+- **Parameterized SQL & ownership isolation:** All queries use `pg` parameterized placeholders (`$1, $2, ...`) and filter exclusively by `req.user.id` derived from the verified JWT and active user row lookup.
+- **API cache protection:** Centralized `/api` middleware sets `Cache-Control: no-store` on all authentication, reading, report, and error responses without disabling caching for static assets.
+- **Login & signup rate limiting:** `express-rate-limit` restricts `/api/auth/register` and `/api/auth/login` to **20 requests per IP per 15 minutes** (`429 RATE_LIMITED`) outside `NODE_ENV=test` (in-memory store; resets on restart).
+- **Environment variable protection:** `.env` files are gitignored, startup fails closed when `JWT_SECRET`, `APP_ORIGIN`, or database URLs are missing/invalid, and `server/.env.example` contains placeholders only.
+
+---
 
 ## Notes
 
-- Planning and specification baseline documents: `requirements.md`, `architecture.md`, `design.md`, and `AGENTS.md`.
-- Assumptions and future improvements will be expanded here as modules are completed.
+### Assumptions
+
+- **Calendar timezone:** All date-only (`YYYY-MM-DD`) defaults, future-date checks, and report boundaries use `Asia/Kolkata`.
+- **Glucose value format:** Readings are stored and validated strictly as whole integers in `mg/dl` between `40` and `600` inclusive.
+- **Fixed daily slots:** Exactly four daily slots (`morning_fasting`, `after_breakfast`, `after_lunch`, `after_dinner`) are supported, with at most one reading per slot per day.
+- **Monthly report definition:** The Monthly report always covers the entire calendar month immediately preceding the selected reference date's month.
+- **Fictional data & non-diagnostic scope:** Seeded and sample readings are entirely synthetic; Sweety is intended solely for personal tracking and provides no medical diagnosis or treatment advice.
+- **Local dev proxy:** During local development, the Vite dev server proxies same-origin `/api` requests from `http://localhost:5173` to Express on `http://localhost:3001`.
+
+### Improvements with More Time
+
+*(The items below are potential future enhancements beyond the currently implemented assessment scope.)*
+
+- **Expanded frontend component test coverage:** While the official bonus `ReadingForm` tests (12 Vitest + React Testing Library tests) are implemented, adding unit and interaction tests for `ConfirmDialog`, `DashboardPage`, and `ReportTabs` would increase frontend coverage further.
+- **Automated end-to-end browser tests:** Playwright/Cypress suites exercising full auth, CRUD, report refresh, and responsive flows against a live database.
+- **Optional monthly trend visualization:** Lightweight, accessible chart view alongside the numeric summary cards.
+- **Pagination / date-range browsing:** Server-backed pagination for multi-day or multi-month reading history tables.
+- **Production deployment & monitoring:** Reverse-proxy TLS termination, structured request logging, external store for rate limiting (e.g., Redis), and health/metrics dashboards.
+- **Expanded accessibility auditing:** Automated CI axe/Lighthouse checks across every authenticated state and breakpoint.
+- **Further session-management hardening:** Server-side token revocation or short-lived rotating sessions for immediate multi-device logout.
