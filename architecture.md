@@ -78,9 +78,9 @@ Base path `/api`. JSON body and response unless stated otherwise. Field names be
 | POST | /readings | date, slot, value | 201, created reading |
 | PUT | /readings/:id | date, slot, value | 200, updated reading |
 | DELETE | /readings/:id | Cookie | 204 |
-| GET | /reports/daily?date=YYYY-MM-DD | Cookie, required date | 200, report and readings |
-| GET | /reports/month-to-date?date=YYYY-MM-DD | Cookie, required date | 200, report |
-| GET | /reports/monthly?date=YYYY-MM-DD | Cookie, required date | 200, previous-month report |
+| GET | /reports/daily?date=YYYY-MM-DD | Cookie, optional date (default today) | 200, report and readings |
+| GET | /reports/month-to-date?date=YYYY-MM-DD | Cookie, optional date (default today) | 200, report |
+| GET | /reports/monthly?date=YYYY-MM-DD | Cookie, optional date (default today) | 200, previous-month report |
 
 Public user fields: `id`, `name`, `email`. Reading fields: `id`, `date`, `slot`, `value`. Reports: `startDate`, `endDate`, `highest`, `lowest`, `average`, `count`; daily also includes `readings`. Report range endpoints are inclusive; empty statistics are null and count zero. Average is numeric rounded to one decimal; frontend formats with one trailing decimal digit. Report numbers must be explicitly converted from PostgreSQL numeric/string results to JSON numbers. Daily details and stats should agree (derive from the same fetched rows or a consistent database snapshot).
 

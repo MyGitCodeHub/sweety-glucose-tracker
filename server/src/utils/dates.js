@@ -65,3 +65,40 @@ export function isFutureKolkataDate(dateString, now = new Date()) {
 
   return parsed.dateString > getTodayKolkataDate(now);
 }
+
+export function getMonthToDateRange(dateString) {
+  const parsed = parseCalendarDate(dateString);
+  if (!parsed) {
+    return null;
+  }
+
+  return {
+    startDate: formatDateOnly(parsed.year, parsed.month, 1),
+    endDate: parsed.dateString,
+  };
+}
+
+export function getPreviousMonthRange(dateString) {
+  const parsed = parseCalendarDate(dateString);
+  if (!parsed) {
+    return null;
+  }
+
+  const prevMonth = parsed.month === 1 ? 12 : parsed.month - 1;
+  const prevYear = parsed.month === 1 ? parsed.year - 1 : parsed.year;
+
+  // Reject ranges whose previous calendar month would fall into invalid year 0000.
+  if (prevYear < 1) {
+    return null;
+  }
+
+  const lastDayUtc = new Date(0);
+  lastDayUtc.setUTCFullYear(prevYear, prevMonth, 0);
+  lastDayUtc.setUTCHours(0, 0, 0, 0);
+  const lastDay = lastDayUtc.getUTCDate();
+
+  return {
+    startDate: formatDateOnly(prevYear, prevMonth, 1),
+    endDate: formatDateOnly(prevYear, prevMonth, lastDay),
+  };
+}

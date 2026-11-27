@@ -11,7 +11,7 @@ Full-stack blood glucose tracking web application built for the Kenpath Technolo
 
 ## Current Development Status
 
-**Module 04 (Glucose Readings CRUD) complete and verified.**
+**Module 05 (Glucose Reports API) complete and verified.**
 
 Implemented:
 - Independent `client/` and `server/` npm packages with committed lockfiles
@@ -23,11 +23,11 @@ Implemented:
 - Idempotent demo seed script (`server/database/seed.js`) generating synthetic readings in `Asia/Kolkata` across current and previous calendar months
 - Authentication APIs (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`) with bcrypt cost 12, `HS256` 8-hour JWTs in `HttpOnly` cookies, Helmet security headers, strict CSRF `Origin` validation, and auth rate limiting
 - Glucose reading CRUD APIs (`POST /api/readings`, `GET /api/readings`, `PUT /api/readings/:id`, `DELETE /api/readings/:id`) with `Asia/Kolkata` calendar date validation, strict JSON integer range checks, per-user `FOR UPDATE` transaction locking, and strict ownership isolation
-- Vitest + Supertest integration test suites (`server/tests/auth.test.js` and `server/tests/readings.test.js`) isolated to `sweety_test`
+- Glucose report APIs (`GET /api/reports/daily`, `GET /api/reports/month-to-date`, `GET /api/reports/monthly`) with `Asia/Kolkata` optional date defaults, SQL aggregation, snapshot-consistent daily details, and friendly null empty-state statistics
+- Vitest + Supertest integration test suites (`server/tests/auth.test.js`, `server/tests/readings.test.js`, and `server/tests/reports.test.js`) isolated to `sweety_test`
 - Minimal Sweety React status page fetching `/api/health` via the Vite `/api` dev proxy
 
 Not yet implemented (upcoming modules):
-- Daily, month-to-date, and previous-month report endpoints (Module 05)
 - Full React authentication and dashboard UI (Module 06)
 
 ## Setup Instructions
@@ -137,28 +137,6 @@ All `/api/readings` endpoints require a valid `sweety_token` cookie (`401 UNAUTH
 | `PUT` | `/api/readings/:id` | `Origin` + Cookie + JSON `{ date, slot, value }` | `200` `{ id, date, slot, value }` |
 | `DELETE` | `/api/readings/:id` | `Origin` + Cookie | `204` empty body |
 
-### Example Request & Response
-
-```json
-POST /api/readings
-{
-  "date": "2026-11-26",
-  "slot": "after_lunch",
-  "value": 142
-}
-```
-
-Response (`201 Created`):
-
-```json
-{
-  "id": 1,
-  "date": "2026-11-26",
-  "slot": "after_lunch",
-  "value": 142
-}
-```
-
 ### Canonical Slots, Dates, and Validation Messages
 
 - **Allowed `slot` codes and labels (in display order):**
@@ -172,7 +150,7 @@ Response (`201 Created`):
   - Missing, `null`, or blank value: `"Please enter a glucose value."` (`400 VALUE_REQUIRED`)
   - Non-integer or out of `40–600` range (including `0`): `"Value must be between 40 and 600 mg/dl."` (`400 VALUE_RANGE`)
   - Future date: `"Date cannot be in the future."` (`400 FUTURE_DATE`)
-  - - Duplicate slot on date: `"You already have a/an <Slot Label> reading for this date."` (`409 DUPLICATE_SLOT`, using `a` for `Morning (fasting)` and `an` for `After ...`)
+  - Duplicate slot on date: `"You already have a/an <Slot Label> reading for this date."` (`409 DUPLICATE_SLOT`, using `a` for `Morning (fasting)` and `an` for `After ...`)
   - Exceeding 4 readings per user per day: `"You can add only 4 readings per day."` (`409 DAILY_LIMIT`, checked before `DUPLICATE_SLOT`)
 
 ### Data Isolation & Concurrency Strategy
@@ -180,9 +158,59 @@ Response (`201 Created`):
 - **User-specific isolation:** Every query derives ownership solely from `req.user.id` (ignoring any client-supplied `user_id`/`userId`). Updates and deletes filter by `id = $1 AND user_id = $2` and return identical `404 READING_NOT_FOUND` responses for nonexistent and foreign-owned IDs.
 - **Per-user transaction locking:** `POST`, `PUT`, and `DELETE` run inside `withTransaction` and lock `SELECT id FROM users WHERE id = $1 FOR UPDATE` before counting, checking slots, or mutating rows. PostgreSQL `UNIQUE (user_id, reading_date, time_slot)` and `CHECK` constraints remain the final integrity guard.
 
+## Glucose Reports API Contracts
+
+All `/api/reports/*` endpoints are read-only `GET` routes protected by `requireAuth` (`401 UNAUTHORIZED` when missing/invalid cookie). All three endpoints accept an optional `?date=YYYY-MM-DD` query parameter:
+- When omitted, `date` defaults to today's calendar date in `Asia/Kolkata`.
+- Blank, malformed, impossible, or repeated `?date=` values return `400 INVALID_DATE`.
+- Future dates (`> today` in `Asia/Kolkata`) return `400 FUTURE_DATE`.
+
+| Method | Path | Date Range (Inclusive) | Response (`200`) |
+|---|---|---|---|
+| `GET` | `/api/reports/daily` | `selectedDate` through `selectedDate` | `{ startDate, endDate, highest, lowest, average, count, readings }` |
+| `GET` | `/api/reports/month-to-date` | `YYYY-MM-01` through `selectedDate` | `{ startDate, endDate, highest, lowest, average, count }` |
+| `GET` | `/api/reports/monthly` | Full calendar month immediately before `selectedDate`'s month | `{ startDate, endDate, highest, lowest, average, count }` |
+
+### Report Rules & Examples
+
+- **Equal weighting & rounding:** `average` is computed over all individual readings in the range (never by averaging daily averages) and rounded to 1 decimal place. Exact integer averages serialize as JSON numbers (e.g. `126`, formatted with one trailing decimal digit in the UI).
+- **Daily snapshot consistency:** `/api/reports/daily` derives `highest`, `lowest`, `average`, `count`, and canonical slot-ordered `readings` from a single SQL query.
+- **Empty reports:** When no readings match the range, `highest`, `lowest`, and `average` are `null` (never `0`), `count` is `0`, and `/daily` returns `readings: []`.
+
+Example `GET /api/reports/daily?date=2026-11-26` response (`200 OK`):
+
+```json
+{
+  "startDate": "2026-11-26",
+  "endDate": "2026-11-26",
+  "highest": 146,
+  "lowest": 98,
+  "average": 124,
+  "count": 3,
+  "readings": [
+    { "id": 1, "date": "2026-11-26", "slot": "morning_fasting", "value": 98 },
+    { "id": 2, "date": "2026-11-26", "slot": "after_lunch", "value": 146 },
+    { "id": 3, "date": "2026-11-26", "slot": "after_dinner", "value": 128 }
+  ]
+}
+```
+
+Example empty `GET /api/reports/monthly?date=2026-11-26` response (`200 OK`):
+
+```json
+{
+  "startDate": "2026-10-01",
+  "endDate": "2026-10-31",
+  "highest": null,
+  "lowest": null,
+  "average": null,
+  "count": 0
+}
+```
+
 ## Automated Tests & Test Database Isolation
 
-Run all backend integration tests (`auth.test.js` and `readings.test.js`) sequentially against `sweety_test`:
+Run all backend integration tests (`auth.test.js`, `readings.test.js`, and `reports.test.js`) sequentially against `sweety_test`:
 
 ```bash
 cd server
@@ -208,6 +236,7 @@ Test isolation safeguards:
 - **Stateless JWT logout limitation:** `POST /api/auth/logout` clears the browser cookie only; it does not revoke a previously copied JWT before its 8-hour expiration (`exp`).
 - **In-memory rate limiter limitation:** Authentication endpoints (`/register`, `/login`) limit requests to **20 per IP per 15-minute window** (`429 RATE_LIMITED`) using `express-rate-limit`'s default in-memory store, which resets on process restart and is scoped per Node process.
 - **Strict Origin policy:** All mutating `/api` requests require an `Origin` header matching `APP_ORIGIN` exactly; missing, malformed, path-bearing, or credential-bearing origins are rejected with `403 FORBIDDEN_ORIGIN`.
+- **API cache protection:** Centralized Express middleware scoped to `/api` sets `Cache-Control: no-store` across all authentication, reading, report, and API error responses so sensitive health data is not cached by browsers or proxies, without disabling caching for non-`/api` frontend static assets.
 - **Separate test database protection:** Automated tests never touch `sweety_dev` and fail closed if `sweety_test` / `sweety_test_app` isolation cannot be verified.
 
 ## Notes

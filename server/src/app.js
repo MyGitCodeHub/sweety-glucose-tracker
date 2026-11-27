@@ -4,12 +4,19 @@ import helmet from 'helmet';
 import { requireTrustedOrigin } from './middleware/security.js';
 import { createAuthRouter } from './routes/authRoutes.js';
 import { createReadingRouter } from './routes/readingRoutes.js';
+import { createReportRouter } from './routes/reportRoutes.js';
 
 export function createApp({ authRateLimitMax } = {}) {
   const app = express();
 
   app.disable('x-powered-by');
   app.use(helmet());
+
+  // Prevent browsers and proxies from caching sensitive /api responses without affecting static assets.
+  app.use('/api', (_req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+  });
 
   // Restrict JSON payload size to protect against oversized request bodies.
   app.use(express.json({ limit: '100kb' }));
@@ -22,6 +29,7 @@ export function createApp({ authRateLimitMax } = {}) {
   app.use('/api', requireTrustedOrigin);
   app.use('/api/auth', createAuthRouter({ authRateLimitMax }));
   app.use('/api/readings', createReadingRouter());
+  app.use('/api/reports', createReportRouter());
 
   // Consistent JSON response for unmatched routes.
   app.use((_req, res) => {
